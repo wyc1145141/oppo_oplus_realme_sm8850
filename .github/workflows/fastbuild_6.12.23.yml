@@ -559,7 +559,35 @@ jobs:
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
-           
+            # Insert immediately before the kernel build step in the build job.
+      - name: Fix KernelSU-Next include paths for Linux 6.12
+        if: inputs.ksu_type == 'ksunext'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("kernel_workspace/common/drivers/kernelsu")
+          for header in ("include/klog.h", "include/uapi/app_profile.h"):
+              if not (root / header).is_file():
+                  raise SystemExit(f"Missing source header: {root / header}")
+
+          kbuild = root / "Kbuild"
+          text = kbuild.read_text()
+          old = "KSU_KERNEL_DIR := $(srctree)/$(src)"
+          new = "KSU_KERNEL_DIR := $(abspath $(src))"
+          # Linux 6.12 already includes VPATH in src for O=out builds.
+          if text.splitlines().count(old) == 1:
+              text = text.replace(old, new, 1)
+              kbuild.write_text(text)
+              print("Fixed KernelSU-Next source include path")
+          elif text.splitlines().count(new) == 1:
+              print("KernelSU-Next include path already fixed")
+          else:
+              raise SystemExit("Unexpected Kbuild layout; inspect before patching")
+          PY
+          
       - name: 构建内核
         run: |
           WORKDIR="$(pwd)"
